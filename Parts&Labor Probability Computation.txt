@@ -1,0 +1,350 @@
+
+USE PBB_V01_OWL
+
+
+-- Build master table with all warranty claims from different regions
+
+drop table #temp1;
+Select * INTO #temp1 from
+	 (Select DISTINCT Position,A_Code,B_Code,Serial_Number 
+			FROM 
+			(
+			SELECT Position,A_Code,B_Code,Serial_Number 
+			FROM PLT.WL_Header
+			UNION 
+			SELECT Position_Code as Position,A_Code,B_Code,Serial_Number 
+			FROM PLT.Falcon_Warranty_Mar_Jul_2016
+			UNION 
+			SELECT Position_Code as Position,A_Code,B_Code,Claim_No as Serial_Number 
+			FROM PLT.Singapore_Warranty_July_YTD_2016
+			) U
+		) t;
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp1] ON #temp1
+(
+	[Serial_Number] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+-- Compute Probability of each labor code pattern given a repair code
+
+drop table #temp2;
+Select *  INTO #temp2 from
+(
+	SELECT D.Position,D.A_Code,D.B_Code,E.Pattern,CONVERT(DECIMAL(10,5),1.00000*NUMER/DENOM) AS Probability FROM 
+	(
+		SELECT Position,A_Code,B_Code,COUNT(PATTERN) AS DENOM FROM #temp1 A,
+		PLT.Transposed_Labors B 
+		WHERE LTRIM(RTRIM(A.Serial_Number)) = LTRIM(RTRIM(B.SERIAL_NO)) 
+		GROUP BY Position,A_Code,B_Code 
+	) d
+	,
+	(
+		SELECT Position,A_Code,B_Code,PATTERN,COUNT(*) AS NUMER FROM #temp1 A,
+		PLT.Transposed_Labors B 
+		WHERE LTRIM(RTRIM(A.Serial_Number)) = LTRIM(RTRIM(B.SERIAL_NO)) 
+		GROUP BY Position,A_Code,B_Code,PATTERN
+	) e
+	WHERE D.POSITION=E.POSITION
+		AND D.A_CODE=E.A_CODE
+		AND D.B_CODE=E.B_CODE
+) Z
+ORDER BY Position,A_Code,B_Code,PATTERN
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp2] ON #temp2
+(
+	[Position] ASC,
+	[A_Code] ASC,
+	[B_Code] ASC
+	
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+
+
+drop table #temp3;
+select * into #temp3 from
+(
+		SELECT distinct a.Position,a.A_Code,a.B_Code,b.Pattern,serial_number,b.Serial_no FROM #temp1 A,
+		PLT.Transposed_Labors B
+		WHERE LTRIM(RTRIM(A.Serial_Number)) = LTRIM(RTRIM(B.SERIAL_NO))
+) z
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp3] ON #temp3
+(
+	[Position] ASC,
+	[A_Code] ASC,
+	[B_Code] ASC
+	
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+
+-- Assign probability for labor code pattern to each claim serial number
+
+drop table #tempprobLABOR;
+SELECT * INTO #TEMPPROBLABOR FROM 
+(
+	select serial_number,c.probability as Labor_Probability
+	from
+	#temp2 c,#temp3 d 
+	where c.position=d.position
+	and c.a_code=d.a_code
+	and c.b_code=d.b_code
+	and c.pattern=d.pattern
+) Z
+
+
+-- Compute Probability of each parts code pattern given a repair code
+
+drop table #temp5;
+Select *  INTO #temp5 from
+(
+	SELECT D.Position,D.A_Code,D.B_Code,E.Pattern,CONVERT(DECIMAL(10,5),1.00000*NUMER/DENOM) AS Probability FROM 
+	(
+		SELECT Position,A_Code,B_Code,COUNT(PATTERN) AS DENOM FROM #temp1 A,
+		PLT.Transposed_Parts B 
+		WHERE LTRIM(RTRIM(A.Serial_Number)) = LTRIM(RTRIM(B.SERIAL_NO)) 
+		GROUP BY Position,A_Code,B_Code 
+	) d
+	,
+	(
+		SELECT Position,A_Code,B_Code,PATTERN,COUNT(*) AS NUMER FROM #temp1 A,
+		PLT.Transposed_Parts B 
+		WHERE LTRIM(RTRIM(A.Serial_Number)) = LTRIM(RTRIM(B.SERIAL_NO)) 
+		GROUP BY Position,A_Code,B_Code,PATTERN
+	) e
+	WHERE D.POSITION=E.POSITION
+		AND D.A_CODE=E.A_CODE
+		AND D.B_CODE=E.B_CODE
+) Z
+ORDER BY Position,A_Code,B_Code,PATTERN
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp5] ON #temp5
+(
+	[Position] ASC,
+	[A_Code] ASC,
+	[B_Code] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+drop table #temp6;
+select * into #temp6 from
+(
+		SELECT distinct a.Position,a.A_Code,a.B_Code,b.Pattern,serial_number,b.Serial_no FROM #temp1 A,
+		PLT.Transposed_Parts B
+		WHERE LTRIM(RTRIM(A.Serial_Number)) = LTRIM(RTRIM(B.SERIAL_NO))
+) z
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp6] ON #temp6
+(
+	[Position] ASC,
+	[A_Code] ASC,
+	[B_Code] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+-- Assign probability for parts code pattern to each claim serial number
+
+drop table #tempprobparts;
+SELECT * INTO #TEMPPROBPARTS FROM 
+(
+	select serial_number,c.probability AS Parts_Probability
+	from
+	#temp5 c,#temp6 d 
+	where c.position=d.position
+	and c.a_code=d.a_code
+	and c.b_code=d.b_code
+	and c.pattern=d.pattern
+) Z
+
+
+SELECT top 50 A.SERIAL_NUMBER,b.Parts_PROBABILITY,a.Labor_PROBABILITY FROM 
+#TEMPPROBLABOR A,#TEMPPROBPARTS B
+WHERE ISNULL(A.SERIAL_NUMBER,'')=ISNULL(B.SERIAL_NUMBER,'')
+
+
+update plt.WL_Header 
+set labor_probability=null
+,parts_probability=null
+
+--
+update a
+set a.Labor_probability = b.Labor_probability
+from plt.wl_header a
+    LEFT join (select * from #tempproblabor) B on
+        ISNULL(A.SERIAL_NUMBER,'') = ISNULL(B.SERIAL_NUMBER,'')
+
+update plt.wl_header
+set Labor_probability = coalesce(Labor_probability,0)
+where Labor_probability is null		
+
+update a
+set a.parts_probability = b.parts_probability
+from plt.wl_header a
+    LEFT join (select * from #tempprobparts) B on
+        ISNULL(A.SERIAL_NUMBER,'') = ISNULL(B.SERIAL_NUMBER,'')
+
+update plt.wl_header
+set parts_probability = coalesce(parts_probability,0)
+where parts_probability is null		
+
+
+--Falcon update 
+
+update plt.Falcon_Warranty_Mar_Jul_2016 
+set dt_labor_probability=null
+,dt_parts_probability=null
+
+update a
+set a.DT_Labor_Probability = b.labor_probability
+from plt.Falcon_Warranty_Mar_Jul_2016 a
+    LEFT join (select * from #tempproblabor) B on
+        ISNULL(A.SERIAL_NUMBER,'') = ISNULL(B.SERIAL_NUMBER,'')
+
+update plt.Falcon_Warranty_Mar_Jul_2016 
+set DT_Labor_Probability = coalesce(DT_Labor_probability,0)
+where DT_Labor_probability is null		
+
+
+update a
+set a.DT_Parts_Probability = b.Parts_probability
+from plt.Falcon_Warranty_Mar_Jul_2016 a
+    LEFT join (select * from #tempprobparts) B on
+        ISNULL(A.SERIAL_NUMBER,'') = ISNULL(B.SERIAL_NUMBER,'')
+
+update plt.Falcon_Warranty_Mar_Jul_2016 
+set DT_Parts_Probability = coalesce(DT_Parts_probability,0)
+where DT_Parts_probability is null		
+
+--Singapore update 
+
+update plt.Singapore_Warranty_July_YTD_2016
+set dt_labor_probability=null
+,dt_parts_probability=null
+
+update a
+set a.DT_Labor_Probability = b.Labor_probability
+from plt.Singapore_Warranty_July_YTD_2016 a
+    LEFT join (select * from #tempproblabor) B on
+        ISNULL(A.Claim_No,'') = ISNULL(B.SERIAL_NUMBER,'')
+
+update plt.Singapore_Warranty_July_YTD_2016
+set DT_Labor_Probability = coalesce(DT_Labor_probability,0)
+where DT_Labor_probability is null		
+
+update a
+set a.DT_Parts_Probability = b.Parts_probability
+from plt.Singapore_Warranty_July_YTD_2016 a
+    LEFT join (select * from #tempprobparts) B on
+        ISNULL(A.Claim_No,'') = ISNULL(B.SERIAL_NUMBER,'')
+
+update plt.Singapore_Warranty_July_YTD_2016
+set DT_parts_Probability = coalesce(DT_parts_probability,0)
+where DT_parts_probability is null	
+
+
+
+
+
+
+use pbb_v01_owl
+drop table #temp1;
+Select * INTO #temp1 from
+	 (Select Position,A_Code,B_Code,Dealer_code 
+			FROM 
+			(
+			SELECT Position,A_Code,B_Code,convert(character,Distributor) as Dealer_code
+			FROM PLT.WL_Header
+			UNION ALL
+			SELECT Position_Code as Position,A_Code,B_Code,convert(character,Dealer_code) as Dealer_code
+			FROM PLT.Falcon_Warranty_Mar_Jul_2016
+			where Line_#=1
+			UNION ALL
+			SELECT Position_Code as Position,A_Code,B_Code,Dealer_code 
+			FROM PLT.Singapore_Warranty_July_YTD_2016
+			where Line_#=1
+			) U
+ 	 	) t;
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp1] ON #temp1
+(
+	[Position] ASC,A_Code ASC,B_Code ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+select * from #temp1
+order by Dealer_code;
+
+
+
+
+drop table #temp2;
+Select *  INTO #temp2 from
+(
+	SELECT D.Position,D.A_Code,D.B_Code,E.Dealer_code,CONVERT(DECIMAL(10,5),1.00000*NUMER/DENOM) AS Probability FROM 
+	(
+		SELECT Position,A_Code,B_Code,COUNT(*) AS DENOM FROM #temp1 A
+		GROUP BY Position,A_Code,B_Code 
+	) d
+	,
+	(
+		SELECT Position,A_Code,B_Code,Dealer_code,COUNT(*) AS NUMER FROM #temp1 
+		GROUP BY Position,A_Code,B_Code,Dealer_code
+	) e
+	WHERE D.POSITION=E.POSITION
+		AND D.A_CODE=E.A_CODE
+		AND D.B_CODE=E.B_CODE
+) Z
+ORDER BY Position,A_Code,B_Code,Dealer_code
+
+CREATE CLUSTERED INDEX [ClusteredIndex-#temp2] ON #temp2
+(
+	[Position] ASC,
+	[A_Code] ASC,
+	[B_Code] ASC
+	
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+
+update plt.WL_Header 
+set repair_probability=null
+
+update a
+set a.repair_probability = b.probability
+from plt.wl_header a
+    LEFT join (select * from #temp2) B on
+        ISNULL(A.Position,'') = ISNULL(B.Position,'')
+		and ISNULL(A.A_Code,'') = ISNULL(B.A_Code,'')
+		and ISNULL(A.B_Code,'') = ISNULL(B.B_Code,'')
+		and ISNULL(A.Distributor,'') = ISNULL(B.Dealer_code,'')
+
+update plt.wl_header
+set repair_probability = coalesce(repair_probability,0)
+where repair_probability is null	
+
+
+update plt.Falcon_Warranty_Mar_Jul_2016 
+set dt_repair_probability=null
+
+update a
+set a.DT_repair_Probability = b.probability
+from plt.Falcon_Warranty_Mar_Jul_2016 a
+    LEFT join (select * from #temp2) B on
+        ISNULL(A.Position_code,'') = ISNULL(B.Position,'')
+		and ISNULL(A.A_Code,'') = ISNULL(B.A_Code,'')
+		and ISNULL(A.B_Code,'') = ISNULL(B.B_Code,'')
+		and ISNULL(convert(character,A.Dealer_code),'') = ISNULL(B.Dealer_code,'')
+
+update plt.Falcon_Warranty_Mar_Jul_2016 
+set DT_repair_Probability = coalesce(DT_repair_probability,0)
+where DT_repair_probability is null		
+
+update plt.Singapore_Warranty_July_YTD_2016
+set dt_repair_probability=null
+
+update a
+set a.DT_repair_Probability = b.probability
+from plt.Singapore_Warranty_July_YTD_2016 a
+    LEFT join (select * from #temp2) B on
+        ISNULL(A.Position_code,'') = ISNULL(B.Position,'')
+		and ISNULL(A.A_Code,'') = ISNULL(B.A_Code,'')
+		and ISNULL(A.B_Code,'') = ISNULL(B.B_Code,'')
+		and ISNULL(convert(character,A.Dealer_code),'') = ISNULL(B.Dealer_code,'')
+
+update plt.Singapore_Warranty_July_YTD_2016
+set DT_repair_Probability = coalesce(DT_repair_probability,0)
+where DT_repair_probability is null		
