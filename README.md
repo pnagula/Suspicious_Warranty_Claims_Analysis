@@ -1,3 +1,3 @@
 # Suspicious_Warranty_Claims_Analysis
 
-![alt text()
+![alt text](https://github.com/pnagula/Suspicious_Warranty_Claims_Analysis/blob/master/Suspicious_Warranty_Claims.jpeg)
